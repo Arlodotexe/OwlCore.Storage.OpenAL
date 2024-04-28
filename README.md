@@ -18,7 +18,17 @@ Or using [dotnet](https://docs.microsoft.com/en-us/dotnet/core/tools/dotnet)
 ## Usage
 
 ```cs
-var test = new Thing();
+var captureDevicesFolder = new OpenALCaptureDevicesFolder();
+
+// Iterate through all capture devices
+await foreach (var captureDevice in captureDevicesFolder.GetFilesAsync(cancellationToken))
+    Console.WriteLine($"Capture device: {captureDevice.Name}");
+
+// Get default capture device
+var defaultDevice = (OpenALCaptureDeviceFile)await captureDevicesFolder.GetItemAsync($"{captureDevicesFolder.Id}/default");
+
+// Change buffer format or sample rate as needed
+defaultDevice.Format = BufferFormat.Mono8;
 ```
 
 ## Financing
