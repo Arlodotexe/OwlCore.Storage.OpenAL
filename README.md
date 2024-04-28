@@ -29,6 +29,49 @@ var defaultDevice = (OpenALCaptureDeviceFile)await captureDevicesFolder.GetItemA
 
 // Change buffer format or sample rate as needed
 defaultDevice.Format = BufferFormat.Mono8;
+
+// Open device stream
+await using var deviceStream = (OpenALCaptureDeviceStream)await deviceFile.OpenReadAsync(cancellationToken);
+
+// Create wav buffer helper (via Naudio.Wave)
+// Because the stream buffer can only be so large, we use the BufferedWaveProvider to collect enough buffered samples to fill a TimeSpan.
+var captureBufferInterval = TimeSpan.FromSeconds(5);
+var wavBufferProvider = new BufferedWaveProvider(deviceStream.WaveFormat)
+{
+    BufferDuration = captureBufferInterval,
+};
+
+// Read device file stream continuously until cancelled
+while (!cancellationToken.IsCancellationRequested)
+{
+    // Read samples from stream
+    // OpenALCaptureDeviceStream should fill it with as many samples as it can given the provided buffer size. The rest is padded with zeros.
+    var sampleBuffer = new byte[deviceStream.WaveFormat.ConvertLatencyToByteSize(500)];
+    var sampleBufferBytesRead = await deviceStream.ReadAsync(sampleBuffer, 0, sampleBuffer.Length, cancellationToken);
+    if (sampleBufferBytesRead == 0)
+        continue;
+
+    // Ignore empty buffers
+    if (sampleBuffer.All(static x => x == default))
+        continue;
+
+    // Copy buffered samples from device stream into our BufferedWaveProvider
+    wavBufferProvider.AddSamples(sampleBuffer, 0, sampleBufferBytesRead);
+
+    // When the full duration has been reached, do something with the full buffer.
+    if (wavBufferProvider.BufferedDuration >= wavBufferProvider.BufferDuration)
+    {
+        // For example
+        // Buffer is full, reset buffered provider and continue;
+        var currentProvider = wavBufferProvider;
+        buffersToProcessLoop.Add(currentProvider);
+
+        wavBufferProvider = new BufferedWaveProvider(deviceStream.WaveFormat)
+        {
+            BufferDuration = captureBufferInterval,
+        };
+    }
+}
 ```
 
 ## Financing
