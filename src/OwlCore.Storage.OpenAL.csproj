@@ -55,8 +55,8 @@ Initial release of OwlCore.Storage.OpenAL.
 
 	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Diagnostics" Version="8.2.2" />
-		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="6.0.0" />
-		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
 		<PackageReference Include="OwlCore.Storage" Version="0.11.0" />
 		<PackageReference Include="PolySharp" Version="1.14.1">
