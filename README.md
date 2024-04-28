@@ -1,15 +1,9 @@
 # OwlCore.Storage.OpenAL [![Version](https://img.shields.io/nuget/v/OwlCore.Storage.OpenAL.svg)](https://www.nuget.org/packages/OwlCore.Storage.OpenAL)
 
-Description goes here.
-
-Extended description goes here. Tell people why they should use your module, how they can install it, and how they can use it. Documentation takes work!
-
-## 
+Handle your audio devices like simple files and folders.
 
 ## Featuring:
-- x
-- y
-- z
+- Capture devices via OpenALCaptureDeviceFolder. Contains files corresponding to available capture devices whose Stream continuously reads samples from the capture device.
 
 ## Install
 

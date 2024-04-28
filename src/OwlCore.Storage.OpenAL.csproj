@@ -2,7 +2,7 @@
 	<PropertyGroup>
 		<TargetFramework>netstandard2.0</TargetFramework>
 		<Nullable>enable</Nullable>
-		<LangVersion>10.0</LangVersion>
+		<LangVersion>12.0</LangVersion>
 		<WarningsAsErrors>nullable</WarningsAsErrors>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 		<PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
@@ -16,7 +16,7 @@
 		<Author>Arlo Godfrey</Author>
 		<Version>0.0.0</Version>
 		<Product>OwlCore</Product>
-		<Description></Description>
+		<Description>Handle your audio devices like simple files and folders.</Description>
 		<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
 		<PackageIcon>logo.png</PackageIcon>
 		<PackageProjectUrl>https://github.com/Arlodotexe/OwlCore.Storage.OpenAL</PackageProjectUrl>
@@ -54,8 +54,21 @@ Initial release of OwlCore.Storage.OpenAL.
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="CommunityToolkit.Diagnostics" Version="8.2.2" />
 		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="6.0.0" />
 		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
+		<PackageReference Include="NAudio.Core" Version="2.2.1" />
+		<PackageReference Include="OwlCore.Storage" Version="0.11.0" />
+		<PackageReference Include="PolySharp" Version="1.14.1">
+		  <PrivateAssets>all</PrivateAssets>
+		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="Silk.NET.OpenAL" Version="2.21.0" />
+		<PackageReference Include="Silk.NET.OpenAL.Extensions.Creative" Version="2.21.0" />
+		<PackageReference Include="Silk.NET.OpenAL.Extensions.Enumeration" Version="2.21.0" />
+		<PackageReference Include="Silk.NET.OpenAL.Extensions.EXT" Version="2.21.0" />
+		<PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.21.0" />
+		<PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
 		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
 	</ItemGroup>
 
