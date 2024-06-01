@@ -13,6 +13,7 @@ namespace OwlCore.Storage.OpenAL;
 public class OpenALCaptureDeviceStream : Stream, IWaveProvider
 {
     private AudioCapture<BufferFormat>? _audioCapture;
+    private unsafe Device* _device;
 
     /// <inheritdoc/>
     public override bool CanRead => true;
@@ -24,7 +25,8 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
     public override bool CanWrite => false;
 
     /// <inheritdoc/>
-    public override long Length => ThrowHelper.ThrowNotSupportedException<long>("Length is not supported for continuous stream");
+    public override long Length =>
+        ThrowHelper.ThrowNotSupportedException<long>("Length is not supported for continuous stream");
 
     /// <summary>
     /// The OpenAL API used for audio capture.
@@ -54,24 +56,26 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
     }
 
     /// <inheritdoc/>
-    public override long Seek(long offset, SeekOrigin origin) => ThrowHelper.ThrowNotSupportedException<long>("Seeking is not supported for continuous stream");
+    public override long Seek(long offset, SeekOrigin origin) =>
+        ThrowHelper.ThrowNotSupportedException<long>("Seeking is not supported for continuous stream");
 
     /// <inheritdoc/>
-    public override void SetLength(long value) => ThrowHelper.ThrowNotSupportedException("Length is not supported for continuous stream");
+    public override void SetLength(long value) =>
+        ThrowHelper.ThrowNotSupportedException("Length is not supported for continuous stream");
 
     /// <inheritdoc/>
-    public override void Write(byte[] buffer, int offset, int count) => ThrowHelper.ThrowNotSupportedException("Writing is not supported for continuous stream");
+    public override void Write(byte[] buffer, int offset, int count) =>
+        ThrowHelper.ThrowNotSupportedException("Writing is not supported for continuous stream");
 
-    /// <inheritdoc/>
+    /// <inheritdoc cref="IWaveProvider.Read"/>
     public override int Read(byte[] buffer, int offset, int count)
     {
-        int bytesPerSample = GetBytesPerSample(BufferFormat);
-        int samplesNeeded = count / bytesPerSample;
-        int actualBytesToCopy = samplesNeeded * bytesPerSample;
+        var bytesPerSample = GetBytesPerSample(BufferFormat);
+        var samplesNeeded = count / bytesPerSample;
 
-        Read(buffer, samplesNeeded);
+        var samplesRead = Read(buffer, samplesNeeded);
 
-        return actualBytesToCopy;
+        return samplesRead * bytesPerSample;
     }
 
     /// <inheritdoc/>
@@ -88,16 +92,29 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
     /// </summary>
     /// <param name="buffer">The buffer to load samples into.</param>
     /// <param name="sampleCount">The number of samples to load.</param>
-    public unsafe void Read(byte[] buffer, int sampleCount)
+    /// <returns>The number of samples read.</returns>
+    public unsafe int Read(byte[] buffer, int sampleCount)
     {
         _audioCapture ??= CreateCaptureForDevice();
+
         if (!_audioCapture.IsRunning)
             _audioCapture.Start();
 
-        fixed (byte* ptr = buffer)
+        if (_audioCapture.AvailableSamples == 0)
+            return 0;
+
+        if (sampleCount > _audioCapture.AvailableSamples)
+            sampleCount = _audioCapture.AvailableSamples;
+
+        if (sampleCount > 0)
         {
-            _audioCapture.CaptureSamples(ptr, sampleCount);
+            fixed (byte* ptr = buffer)
+            {
+                _audioCapture.CaptureSamples(ptr, sampleCount);
+            }
         }
+
+        return sampleCount;
     }
 
     unsafe AudioCapture<BufferFormat> CreateCaptureForDevice()
@@ -106,12 +123,12 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
         var context = DeviceFile.Parent?.OpenALContext ?? ALContext.GetApi(true);
 
         // Get input device
-        var inputDevice = context.OpenDevice(DeviceFile.Name);
-        var inputDeviceContext = context.CreateContext(inputDevice, null);
-        context.MakeContextCurrent(inputDeviceContext);
+        _device = context.OpenDevice(DeviceFile.Name);
+        var deviceContext = context.CreateContext(_device, null);
+        context.MakeContextCurrent(deviceContext);
 
         // Get capture api for input devices
-        if (!context.TryGetExtension(inputDevice, out Capture capture))
+        if (!context.TryGetExtension(_device, out Capture capture))
             throw new InvalidOperationException($"Couldn't open capture for input device {DeviceFile.Name}");
 
         return _audioCapture ??= capture.CreateCapture<BufferFormat>(DeviceFile.Name, Frequency, BufferFormat);
@@ -133,9 +150,13 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
     }
 
     /// <inheritdoc/>
-    protected override void Dispose(bool disposing)
+    protected override unsafe void Dispose(bool disposing)
     {
         _audioCapture?.Dispose();
+
+        if (_device != null)
+            DeviceFile.Parent.OpenALContext?.CloseDevice(_device);
+
         base.Dispose(disposing);
     }
 }

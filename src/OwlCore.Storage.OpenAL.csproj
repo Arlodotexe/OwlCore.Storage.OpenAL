@@ -1,4 +1,5 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>netstandard2.0</TargetFramework>
 		<Nullable>enable</Nullable>
@@ -21,6 +22,11 @@
 		<PackageIcon>logo.png</PackageIcon>
 		<PackageProjectUrl>https://github.com/Arlodotexe/OwlCore.Storage.OpenAL</PackageProjectUrl>
 		<PackageReleaseNotes>
+--- 0.0.1 ---
+[Fixes]
+Fixed an issue where more samples than available could be requested while reading OpenALCaptureDeviceStream.
+Fixed an issue where OpenALCaptureDeviceStream wouldn't dispose the underlying device.
+
 --- 0.0.0 ---
 [New]
 Initial release of OwlCore.Storage.OpenAL.
