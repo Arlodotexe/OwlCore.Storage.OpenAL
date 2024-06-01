@@ -13,7 +13,7 @@ namespace OwlCore.Storage.OpenAL;
 public class OpenALCaptureDevicesFolder : IFolder
 {
     /// <inheritdoc/>
-    public string Id => "/openal/capturedevices/";
+    public string Id => "openal_capture_devices";
 
     /// <inheritdoc/>
     public string Name => "Capture devices";
@@ -29,11 +29,11 @@ public class OpenALCaptureDevicesFolder : IFolder
         // Start OpenAL-Soft
         OpenALContext ??= ALContext.GetApi(true);
 
-        var defaultDevice = GetDefaultCaptureDevice(OpenALContext);
+        var defaultDeviceName = GetDefaultCaptureDevice(OpenALContext);
         yield return new OpenALCaptureDeviceFile
         {
-            Id = $"{Id}/default",
-            Name = defaultDevice,
+            Id = "default",
+            Name = defaultDeviceName,
             Parent = this,
             OpenALContext = OpenALContext,
         };
@@ -43,7 +43,7 @@ public class OpenALCaptureDevicesFolder : IFolder
         {
             yield return new OpenALCaptureDeviceFile
             {
-                Id = $"{Id}/{deviceName}",
+                Id = deviceName,
                 Name = deviceName,
                 Parent = this,
                 OpenALContext = OpenALContext,
