@@ -15,7 +15,7 @@
 		<AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
 
 		<Author>Arlo Godfrey</Author>
-		<Version>0.0.0</Version>
+		<Version>0.0.1</Version>
 		<Product>OwlCore</Product>
 		<Description>Handle your audio devices like simple files and folders.</Description>
 		<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
@@ -26,6 +26,9 @@
 [Fixes]
 Fixed an issue where more samples than available could be requested while reading OpenALCaptureDeviceStream.
 Fixed an issue where OpenALCaptureDeviceStream wouldn't dispose the underlying device.
+
+[Improvements]
+Bump OwlCore.Storage to 0.11.3.
 
 [Breaking]
 Removed superficial string transforms on capture file/folder Ids. The device name or "default" is now used for capture device file Ids, and "openal_capture_devices" is used for the capture device folder Id.
@@ -67,7 +70,7 @@ Initial release of OwlCore.Storage.OpenAL.
 		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
 		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
-		<PackageReference Include="OwlCore.Storage" Version="0.11.0" />
+		<PackageReference Include="OwlCore.Storage" Version="0.11.3" />
 		<PackageReference Include="PolySharp" Version="1.14.1">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
