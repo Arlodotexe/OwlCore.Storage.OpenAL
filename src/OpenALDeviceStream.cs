@@ -368,7 +368,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     #endregion
 
     #region Streaming Implementation
-
+    
     /// <summary>
     /// Initializes the streaming process by filling initial OpenAL buffers and starting playback.
     /// </summary>
@@ -393,95 +393,190 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         _isStreaming = true;
 
         // Fill initial buffers with accumulated data
-        // We try to fill as many of our NUM_BUFFERS as possible to provide a good buffer
-        // of audio data before starting playback, reducing chance of underruns
+        var buffersQueued = FillInitialBuffers();
+
+        // Queue the filled buffers for OpenAL playback
+        if (buffersQueued > 0)
+            QueueBuffersForPlayback(buffersQueued);
+
+        // Start audio playback if we haven't already and have buffers ready
+        StartPlaybackIfReady(buffersQueued);
+    }
+
+    /// <summary>
+    /// Fills as many OpenAL buffers as possible with accumulated audio data.
+    /// </summary>
+    /// <returns>The number of buffers successfully filled and prepared for queuing.</returns>
+    /// <remarks>
+    /// We try to fill as many of our NUM_BUFFERS as possible to provide a good buffer
+    /// of audio data before starting playback, reducing chance of underruns.
+    /// </remarks>
+    private unsafe int FillInitialBuffers()
+    {
         int buffersQueued = 0;
 
         for (int i = 0; i < NUM_BUFFERS && _accumulatedData.Length > 0; i++)
         {
-            // Determine how much data to read for this buffer
-            // Use the smaller of BUFFER_SIZE or whatever data we have left
-            var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
-            var bufferData = new byte[dataToRead];
+            var bufferData = ReadAudioDataForBuffer();
+            if (bufferData.Length == 0)
+                break;
 
-            // Read from the front of our accumulated data (FIFO order)
-            // This ensures audio plays in the same order it was written
-            _accumulatedData.Seek(0, SeekOrigin.Begin);
-            var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
-
-            Console.WriteLine($"Buffer {i}: Reading {bytesRead} bytes");
-
-            if (bytesRead > 0)
+            if (FillSingleBuffer(i, bufferData))
             {
-                // Debug validation: Log first few bytes of audio data for troubleshooting
-                // This helps identify issues like receiving WAV headers instead of raw PCM data
-                if (bytesRead >= 8)
-                {
-                    Console.WriteLine($"Buffer {i} first bytes: {bufferData[0]:X2} {bufferData[1]:X2} {bufferData[2]:X2} {bufferData[3]:X2} {bufferData[4]:X2} {bufferData[5]:X2} {bufferData[6]:X2} {bufferData[7]:X2}");
-                }
-
-                // Debug validation: Check for silence (all zeros) which might indicate a problem
-                bool isAllZeros = true;
-                for (int j = 0; j < Math.Min(bytesRead, 100); j++)
-                {
-                    if (bufferData[j] != 0)
-                    {
-                        isAllZeros = false;
-                        break;
-                    }
-                }
-                Console.WriteLine($"Buffer {i}: Is silence (first 100 bytes): {isAllZeros}");
-
-                // Load the PCM audio data into the OpenAL buffer
-                // This is where the raw audio bytes get sent to the audio system
-                fixed (byte* pBuffer = bufferData)
-                {
-                    OpenALApi.BufferData(_alBuffers[i], BufferFormat, pBuffer, bytesRead, Frequency);
-                }
-
-                // Check for OpenAL errors after loading buffer data
-                var bufferError = OpenALApi.GetError();
-                if (bufferError is not AudioError.NoError)
-                {
-                    Console.WriteLine($"BufferData error for buffer {i}: {bufferError}");
-                    throw new Exception($"BufferData error: {bufferError}");
-                }
-
-                // Remove the consumed data from our accumulation buffer
-                // This prevents the same data from being processed again
-                RemoveDataFromFront(bytesRead);
                 buffersQueued++;
                 Console.WriteLine($"Buffer {i}: Successfully filled and marked for queuing");
             }
         }
+
         Console.WriteLine($"Total buffers to queue: {buffersQueued}");
+        return buffersQueued;
+    }
 
-        // Queue the filled buffers for OpenAL playback
-        // OpenAL maintains an internal queue of buffers to play in sequence
-        if (buffersQueued > 0)
+    /// <summary>
+    /// Reads audio data from the accumulated buffer for a single OpenAL buffer.
+    /// </summary>
+    /// <returns>The audio data read from the accumulated buffer.</returns>
+    /// <remarks>
+    /// This ensures audio plays in the same order it was written (FIFO order).
+    /// </remarks>
+    private byte[] ReadAudioDataForBuffer()
+    {
+        // Determine how much data to read for this buffer
+        // Use the smaller of BUFFER_SIZE or whatever data we have left
+        var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
+        var bufferData = new byte[dataToRead];
+
+        // Read from the front of our accumulated data (FIFO order)
+        _accumulatedData.Seek(0, SeekOrigin.Begin);
+        var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
+
+        Console.WriteLine($"Reading {bytesRead} bytes from accumulated data");
+
+        // Return only the bytes actually read
+        if (bytesRead < dataToRead)
         {
-            // Create a stack-allocated array of buffer handles to queue
-            // Using stackalloc is efficient for small, temporary arrays
-            var buffersToQueue = stackalloc uint[buffersQueued];
-            for (int i = 0; i < buffersQueued; i++)
-            {
-                buffersToQueue[i] = _alBuffers[i];
-            }
-
-            // Add the buffers to OpenAL's playback queue
-            OpenALApi.SourceQueueBuffers(_source, buffersQueued, buffersToQueue);
-
-            var queueError = OpenALApi.GetError();
-            if (queueError is not AudioError.NoError)
-            {
-                Console.WriteLine($"SourceQueueBuffers error: {queueError}");
-                throw new Exception($"SourceQueueBuffers error: {queueError}");
-            }
-
-            Console.WriteLine($"Successfully queued {buffersQueued} buffers");
+            var actualData = new byte[bytesRead];
+            Array.Copy(bufferData, actualData, bytesRead);
+            return actualData;
         }
 
-        // Start audio playback if we haven't already and have buffers ready
+        return bufferData;
+    }
+
+    /// <summary>
+    /// Fills a single OpenAL buffer with audio data and performs validation.
+    /// </summary>
+    /// <param name="bufferIndex">The index of the buffer being filled.</param>
+    /// <param name="bufferData">The audio data to load into the buffer.</param>
+    /// <returns>True if the buffer was successfully filled, false otherwise.</returns>
+    /// <remarks>
+    /// This is where the raw audio bytes get sent to the audio system.
+    /// </remarks>
+    private unsafe bool FillSingleBuffer(int bufferIndex, byte[] bufferData)
+    {
+        Guard.IsNotNull(OpenALApi);
+        var bytesRead = bufferData.Length;
+        if (bytesRead <= 0)
+            return false;
+
+        // Debug validation: Log first few bytes of audio data for troubleshooting
+        // This helps identify issues like receiving WAV headers instead of raw PCM data
+        LogBufferDataForDebugging(bufferIndex, bufferData);
+
+        // Load the PCM audio data into the OpenAL buffer
+        fixed (byte* pBuffer = bufferData)
+        {
+            OpenALApi.BufferData(_alBuffers[bufferIndex], BufferFormat, pBuffer, bytesRead, Frequency);
+        }
+
+        // Check for OpenAL errors after loading buffer data
+        var bufferError = OpenALApi.GetError();
+        if (bufferError is not AudioError.NoError)
+        {
+            Console.WriteLine($"BufferData error for buffer {bufferIndex}: {bufferError}");
+            throw new Exception($"BufferData error: {bufferError}");
+        }
+
+        // Remove the consumed data from our accumulation buffer
+        // This prevents the same data from being processed again
+        RemoveDataFromFront(bytesRead);
+        return true;
+    }
+
+    /// <summary>
+    /// Logs buffer data for debugging purposes.
+    /// </summary>
+    /// <param name="bufferIndex">The index of the buffer being logged.</param>
+    /// <param name="bufferData">The buffer data to log.</param>
+    /// <remarks>
+    /// This helps identify issues like receiving WAV headers instead of raw PCM data
+    /// and checks for silence which might indicate a problem.
+    /// </remarks>
+    private static void LogBufferDataForDebugging(int bufferIndex, byte[] bufferData)
+    {
+        var bytesRead = bufferData.Length;
+
+        // Debug validation: Log first few bytes of audio data for troubleshooting
+        if (bytesRead >= 8)
+        {
+            Console.WriteLine($"Buffer {bufferIndex} first bytes: {bufferData[0]:X2} {bufferData[1]:X2} {bufferData[2]:X2} {bufferData[3]:X2} {bufferData[4]:X2} {bufferData[5]:X2} {bufferData[6]:X2} {bufferData[7]:X2}");
+        }
+
+        // Debug validation: Check for silence (all zeros) which might indicate a problem
+        bool isAllZeros = true;
+        for (int j = 0; j < Math.Min(bytesRead, 100); j++)
+        {
+            if (bufferData[j] != 0)
+            {
+                isAllZeros = false;
+                break;
+            }
+        }
+        Console.WriteLine($"Buffer {bufferIndex}: Is silence (first 100 bytes): {isAllZeros}");
+    }
+
+    /// <summary>
+    /// Queues the filled buffers for OpenAL playback.
+    /// </summary>
+    /// <param name="buffersQueued">The number of buffers to queue for playback.</param>
+    /// <remarks>
+    /// OpenAL maintains an internal queue of buffers to play in sequence.
+    /// Using stackalloc is efficient for small, temporary arrays.
+    /// </remarks>
+    private unsafe void QueueBuffersForPlayback(int buffersQueued)
+    {
+        Guard.IsNotNull(OpenALApi);
+        // Create a stack-allocated array of buffer handles to queue
+        var buffersToQueue = stackalloc uint[buffersQueued];
+        for (int i = 0; i < buffersQueued; i++)
+        {
+            buffersToQueue[i] = _alBuffers[i];
+        }
+
+        // Add the buffers to OpenAL's playback queue
+        OpenALApi.SourceQueueBuffers(_source, buffersQueued, buffersToQueue);
+
+        var queueError = OpenALApi.GetError();
+        if (queueError is not AudioError.NoError)
+        {
+            Console.WriteLine($"SourceQueueBuffers error: {queueError}");
+            throw new Exception($"SourceQueueBuffers error: {queueError}");
+        }
+
+        Console.WriteLine($"Successfully queued {buffersQueued} buffers");
+    }
+
+    /// <summary>
+    /// Starts audio playback if conditions are met and playback hasn't already started.
+    /// </summary>
+    /// <param name="buffersQueued">The number of buffers that were queued for playback.</param>
+    /// <remarks>
+    /// Prevents multiple calls to SourcePlay() on the same source and verifies
+    /// the source actually started playing for debugging purposes.
+    /// </remarks>
+    private void StartPlaybackIfReady(int buffersQueued)
+    {
+        Guard.IsNotNull(OpenALApi);
         if (!_playbackStarted && buffersQueued > 0)
         {
             Console.WriteLine("Starting OpenAL playback...");
