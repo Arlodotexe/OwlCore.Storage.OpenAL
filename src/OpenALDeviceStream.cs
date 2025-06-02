@@ -603,7 +603,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             Console.WriteLine($"Not starting playback: buffersQueued={buffersQueued}");
         }
     }
-
+    
     /// <summary>
     /// Processes buffers that OpenAL has finished playing and refills them with new audio data.
     /// </summary>
@@ -624,14 +624,48 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         Guard.IsNotNull(OpenALApi);
 
+        var buffersProcessed = GetCompletedBufferCount();
+        if (buffersProcessed < 0) return;
+
+        LogStreamingStateIfActive(buffersProcessed);
+
+        // CRITICAL STREAMING LOGIC: Only process if we have BOTH completed buffers AND new data
+        // This condition can cause audio cutoff when the input stream ends but OpenAL is still playing
+        if (buffersProcessed > 0 && _accumulatedData.Length > 0)
+        {
+            ProcessAndRefillCompletedBuffers(buffersProcessed);
+        }
+
+        EnsurePlaybackContinues();
+    }
+    
+    /// <summary>
+    /// Gets the count of buffers that OpenAL has finished processing.
+    /// </summary>
+    /// <returns>Number of completed buffers, or -1 if an error occurred.</returns>
+    private int GetCompletedBufferCount()
+    {
+        Guard.IsNotNull(OpenALApi);
+
         // Query OpenAL to see how many buffers have finished playing
         // This tells us how many buffers are available for refilling
         OpenALApi.GetSourceProperty(_source, GetSourceInteger.BuffersProcessed, out int buffersProcessed);
 
         var processedError = OpenALApi.GetError();
         if (processedError is not AudioError.NoError)
-            return; // Silently ignore errors during buffer processing to avoid spam
+            return -1; // Silently ignore errors during buffer processing to avoid spam
 
+        return buffersProcessed;
+    }
+
+    /// <summary>
+    /// Logs streaming state information for debugging purposes when there's activity.
+    /// </summary>
+    /// <param name="buffersProcessed">Number of buffers that have been processed.</param>
+    private void LogStreamingStateIfActive(int buffersProcessed)
+    {
+        Guard.IsNotNull(OpenALApi);
+        
         // Debug logging: Track the streaming state to understand what's happening
         // This helps diagnose issues like buffer starvation or playback problems
         if (buffersProcessed > 0 || _accumulatedData.Length > 0)
@@ -640,78 +674,131 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int sourceState);
             Console.WriteLine($"ProcessCompletedBuffers: processed={buffersProcessed}, queued={buffersQueued}, state={sourceState}, accumulatedData={_accumulatedData.Length}");
         }
+    }
 
-        // CRITICAL STREAMING LOGIC: Only process if we have BOTH completed buffers AND new data
-        // This condition can cause audio cutoff when the input stream ends but OpenAL is still playing
-        if (buffersProcessed > 0 && _accumulatedData.Length > 0)
+    /// <summary>
+    /// Processes and refills completed buffers with new audio data.
+    /// </summary>
+    /// <param name="buffersProcessed">Number of buffers to process.</param>
+    private unsafe void ProcessAndRefillCompletedBuffers(int buffersProcessed)
+    {
+        Console.WriteLine($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Length} bytes");
+
+        // Unqueue the completed buffers from OpenAL
+        // These buffers have finished playing and are now available for reuse
+        var processedBuffers = stackalloc uint[buffersProcessed];
+        if (!UnqueueCompletedBuffers(buffersProcessed, processedBuffers))
+            return;
+
+        // Refill the processed buffers with new audio data
+        // This maintains the continuous stream by recycling completed buffers
+        var buffersRefilled = RefillProcessedBuffers(buffersProcessed, processedBuffers);
+
+        // Re-queue the refilled buffers back to OpenAL for continued playback
+        // This maintains the continuous audio stream
+        if (buffersRefilled > 0)
         {
-            Console.WriteLine($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Length} bytes");
+            RequeueRefilledBuffers(buffersRefilled, processedBuffers);
+        }
+    }
 
-            // Unqueue the completed buffers from OpenAL
-            // These buffers have finished playing and are now available for reuse
-            var processedBuffers = stackalloc uint[buffersProcessed];
-            OpenALApi.SourceUnqueueBuffers(_source, buffersProcessed, processedBuffers);
+    /// <summary>
+    /// Unqueues completed buffers from OpenAL.
+    /// </summary>
+    /// <param name="buffersProcessed">Number of buffers to unqueue.</param>
+    /// <param name="processedBuffers">Pointer to store the unqueued buffer handles.</param>
+    /// <returns>True if successful, false if an error occurred.</returns>
+    private unsafe bool UnqueueCompletedBuffers(int buffersProcessed, uint* processedBuffers)
+    {
+        Guard.IsNotNull(OpenALApi);
+        
+        OpenALApi.SourceUnqueueBuffers(_source, buffersProcessed, processedBuffers);
 
-            var unqueueError = OpenALApi.GetError();
-            if (unqueueError is not AudioError.NoError)
+        var unqueueError = OpenALApi.GetError();
+        if (unqueueError is not AudioError.NoError)
+        {
+            Console.WriteLine($"SourceUnqueueBuffers error: {unqueueError}");
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Refills processed buffers with new audio data from the accumulated buffer.
+    /// </summary>
+    /// <param name="buffersProcessed">Number of buffers available for refilling.</param>
+    /// <param name="processedBuffers">Pointer to the buffer handles to refill.</param>
+    /// <returns>Number of buffers successfully refilled.</returns>
+    private unsafe int RefillProcessedBuffers(int buffersProcessed, uint* processedBuffers)
+    {
+        Guard.IsNotNull(OpenALApi);
+        
+        int buffersRefilled = 0;
+        for (int i = 0; i < buffersProcessed && _accumulatedData.Length > 0; i++)
+        {
+            // Determine how much data to read for this buffer
+            var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
+            var bufferData = new byte[dataToRead];
+
+            // Read from the front of our accumulated data (FIFO order)
+            _accumulatedData.Seek(0, SeekOrigin.Begin);
+            var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
+
+            if (bytesRead > 0)
             {
-                Console.WriteLine($"SourceUnqueueBuffers error: {unqueueError}");
-                return;
-            }
-
-            // Refill the processed buffers with new audio data
-            // This maintains the continuous stream by recycling completed buffers
-            int buffersRefilled = 0;
-            for (int i = 0; i < buffersProcessed && _accumulatedData.Length > 0; i++)
-            {
-                // Determine how much data to read for this buffer
-                var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
-                var bufferData = new byte[dataToRead];
-
-                // Read from the front of our accumulated data (FIFO order)
-                _accumulatedData.Seek(0, SeekOrigin.Begin);
-                var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
-
-                if (bytesRead > 0)
+                // Load the new audio data into the recycled OpenAL buffer
+                fixed (byte* pBuffer = bufferData)
                 {
-                    // Load the new audio data into the recycled OpenAL buffer
-                    fixed (byte* pBuffer = bufferData)
-                    {
-                        OpenALApi.BufferData(processedBuffers[i], BufferFormat, pBuffer, bytesRead, Frequency);
-                    }
-                    var bufferError = OpenALApi.GetError();
-                    if (bufferError is not AudioError.NoError)
-                    {
-                        Console.WriteLine($"BufferData error: {bufferError}");
-                        continue; // Skip this buffer and try the next one
-                    }
-
-                    // Remove the consumed data from our accumulation buffer
-                    RemoveDataFromFront(bytesRead);
-                    buffersRefilled++;
-
-                    Console.WriteLine($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Length} bytes");
+                    OpenALApi.BufferData(processedBuffers[i], BufferFormat, pBuffer, bytesRead, Frequency);
                 }
-            }
-
-            // Re-queue the refilled buffers back to OpenAL for continued playback
-            // This maintains the continuous audio stream
-            if (buffersRefilled > 0)
-            {
-                OpenALApi.SourceQueueBuffers(_source, buffersRefilled, processedBuffers);
-
-                var requeueError = OpenALApi.GetError();
-                if (requeueError is not AudioError.NoError)
+                var bufferError = OpenALApi.GetError();
+                if (bufferError is not AudioError.NoError)
                 {
-                    Console.WriteLine($"SourceQueueBuffers error: {requeueError}");
+                    Console.WriteLine($"BufferData error: {bufferError}");
+                    continue; // Skip this buffer and try the next one
                 }
-                else
-                {
-                    Console.WriteLine($"Successfully requeued {buffersRefilled} buffers");
-                }
+
+                // Remove the consumed data from our accumulation buffer
+                RemoveDataFromFront(bytesRead);
+                buffersRefilled++;
+
+                Console.WriteLine($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Length} bytes");
             }
         }
 
+        return buffersRefilled;
+    }
+
+    /// <summary>
+    /// Re-queues refilled buffers back to OpenAL for continued playback.
+    /// </summary>
+    /// <param name="buffersRefilled">Number of buffers to re-queue.</param>
+    /// <param name="processedBuffers">Pointer to the buffer handles to re-queue.</param>
+    private unsafe void RequeueRefilledBuffers(int buffersRefilled, uint* processedBuffers)
+    {
+        Guard.IsNotNull(OpenALApi);
+        
+        OpenALApi.SourceQueueBuffers(_source, buffersRefilled, processedBuffers);
+
+        var requeueError = OpenALApi.GetError();
+        if (requeueError is not AudioError.NoError)
+        {
+            Console.WriteLine($"SourceQueueBuffers error: {requeueError}");
+        }
+        else
+        {
+            Console.WriteLine($"Successfully requeued {buffersRefilled} buffers");
+        }
+    }
+
+    /// <summary>
+    /// Ensures playback continues if it stopped unexpectedly.
+    /// </summary>
+    private void EnsurePlaybackContinues()
+    {
+        Guard.IsNotNull(OpenALApi);
+        
         // Safety check: Restart playback if it stopped unexpectedly
         // Sometimes OpenAL stops playing if it runs out of queued buffers temporarily
         OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int currentSourceState);
