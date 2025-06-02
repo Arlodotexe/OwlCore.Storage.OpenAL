@@ -672,6 +672,16 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         {
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int buffersQueued);
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int sourceState);
+
+            // CRITICAL BUG: Audio completely stops if this Console.WriteLine operation is removed!
+            // Investigation results:
+            // ✅ Console.WriteLine() - works (original)
+            // ✅ Console.Error.WriteLine() - works  
+            // ⚠️ Debug.WriteLine() - partial improvement, near immediate exit
+            // ❌ Thread.MemoryBarrier() - immediate exit
+            // ❌ Thread.Yield(), Thread.Sleep(1), Thread.Sleep(0), Task.Delay() - various failures, near immediate exit
+            // It's probably the missing lock on the _accumulatedData Stream
+            // When we pull from this stream to write to the buffer, we also shift the entire stream back by the number of bytes read.
             Console.WriteLine($"ProcessCompletedBuffers: processed={buffersProcessed}, queued={buffersQueued}, state={sourceState}, accumulatedData={_accumulatedData.Length}");
         }
     }
