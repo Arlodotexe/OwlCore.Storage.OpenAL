@@ -4,6 +4,8 @@ using NAudio.Wave;
 using Silk.NET.OpenAL;
 using System.IO;
 using System.Linq;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace OwlCore.Storage.OpenAL;
 
@@ -75,7 +77,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     /// Memory stream that accumulates all incoming audio data from Write() calls.
     /// Data is consumed from the front as it's loaded into OpenAL buffers.
     /// </summary>
-    private MemoryStream _accumulatedData = new();
+    private Queue<byte[]> _accumulatedData = new();
 
     /// <summary>
     /// Flag indicating whether streaming has been initialized and started.
@@ -88,12 +90,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     /// Prevents multiple calls to SourcePlay() on the same source.
     /// </summary>
     private bool _playbackStarted = false;
-
-    /// <summary>
-    /// Timestamp of the last buffer processing check (currently unused).
-    /// Could be used for periodic buffer maintenance or debugging.
-    /// </summary>
-    private DateTime _lastBufferCheck = DateTime.MinValue;
 
     #endregion
 
@@ -198,6 +194,8 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         lock (_lockobj)
         {
+            //Console.WriteLine($"Write called: offset={offset}, count={count}, accumulatedData={_accumulatedData.Count} buffers, total size={_accumulatedData.Sum(b => b.Length)} bytes");
+
             // Initialize OpenAL device on first write
             if (_source == default)
                 OpenDevice();
@@ -206,11 +204,11 @@ public class OpenALDeviceStream : Stream, IWaveProvider
 
             // Extract and accumulate the audio data from the provided buffer
             var data = buffer.Skip(offset).Take(count).ToArray();
-            _accumulatedData.Write(data, 0, data.Length);
+            _accumulatedData.Enqueue(data);
 
             // Start streaming when we have accumulated enough data to fill at least 2 buffers
             // This ensures smooth initial playback without immediate buffer underruns
-            if (!_isStreaming && _accumulatedData.Length >= BUFFER_SIZE * 2)
+            if (!_isStreaming && _accumulatedData.Sum(b => b.Length) >= BUFFER_SIZE * 2)
             {
                 StartStreaming();
             }
@@ -368,7 +366,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     #endregion
 
     #region Streaming Implementation
-    
+
     /// <summary>
     /// Initializes the streaming process by filling initial OpenAL buffers and starting playback.
     /// </summary>
@@ -387,7 +385,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         Guard.IsNotNull(OpenALApi);
 
         Console.WriteLine("StartStreaming called");
-        Console.WriteLine($"Accumulated data: {_accumulatedData.Length} bytes");
+        Console.WriteLine($"Accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
 
         // Mark streaming as active - this enables buffer processing on future Write() calls
         _isStreaming = true;
@@ -415,7 +413,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         int buffersQueued = 0;
 
-        for (int i = 0; i < NUM_BUFFERS && _accumulatedData.Length > 0; i++)
+        for (int i = 0; i < NUM_BUFFERS && _accumulatedData.Count > 0; i++)
         {
             var bufferData = ReadAudioDataForBuffer();
             if (bufferData.Length == 0)
@@ -443,21 +441,15 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         // Determine how much data to read for this buffer
         // Use the smaller of BUFFER_SIZE or whatever data we have left
-        var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
+        var dataToRead = Math.Min(BUFFER_SIZE, _accumulatedData.Sum(b => b.Length));
         var bufferData = new byte[dataToRead];
 
-        // Read from the front of our accumulated data (FIFO order)
-        _accumulatedData.Seek(0, SeekOrigin.Begin);
-        var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
-
-        Console.WriteLine($"Reading {bytesRead} bytes from accumulated data");
-
-        // Return only the bytes actually read
-        if (bytesRead < dataToRead)
+        for (int o = 0; o < dataToRead;)
         {
-            var actualData = new byte[bytesRead];
-            Array.Copy(bufferData, actualData, bytesRead);
-            return actualData;
+            var nextAccumulatedBuffer = _accumulatedData.Dequeue();
+            int bytesToCopy = Math.Min(nextAccumulatedBuffer.Length, dataToRead - o);
+            Array.Copy(nextAccumulatedBuffer, 0, bufferData, o, bytesToCopy);
+            o += bytesToCopy;
         }
 
         return bufferData;
@@ -497,9 +489,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             throw new Exception($"BufferData error: {bufferError}");
         }
 
-        // Remove the consumed data from our accumulation buffer
-        // This prevents the same data from being processed again
-        RemoveDataFromFront(bytesRead);
         return true;
     }
 
@@ -603,7 +592,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             Console.WriteLine($"Not starting playback: buffersQueued={buffersQueued}");
         }
     }
-    
+
     /// <summary>
     /// Processes buffers that OpenAL has finished playing and refills them with new audio data.
     /// </summary>
@@ -631,14 +620,14 @@ public class OpenALDeviceStream : Stream, IWaveProvider
 
         // CRITICAL STREAMING LOGIC: Only process if we have BOTH completed buffers AND new data
         // This condition can cause audio cutoff when the input stream ends but OpenAL is still playing
-        if (buffersProcessed > 0 && _accumulatedData.Length > 0)
+        if (buffersProcessed > 0 && _accumulatedData.Count > 0)
         {
             ProcessAndRefillCompletedBuffers(buffersProcessed);
         }
 
         EnsurePlaybackContinues();
     }
-    
+
     /// <summary>
     /// Gets the count of buffers that OpenAL has finished processing.
     /// </summary>
@@ -665,10 +654,10 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private void LogStreamingStateIfActive(int buffersProcessed)
     {
         Guard.IsNotNull(OpenALApi);
-        
+
         // Debug logging: Track the streaming state to understand what's happening
         // This helps diagnose issues like buffer starvation or playback problems
-        if (buffersProcessed > 0 || _accumulatedData.Length > 0)
+        if (buffersProcessed > 0 || _accumulatedData.Count > 0)
         {
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int buffersQueued);
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int sourceState);
@@ -682,7 +671,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             // ❌ Thread.Yield(), Thread.Sleep(1), Thread.Sleep(0), Task.Delay() - various failures, near immediate exit
             // It's probably the missing lock on the _accumulatedData Stream
             // When we pull from this stream to write to the buffer, we also shift the entire stream back by the number of bytes read.
-            Console.WriteLine($"ProcessCompletedBuffers: processed={buffersProcessed}, queued={buffersQueued}, state={sourceState}, accumulatedData={_accumulatedData.Length}");
+            Console.WriteLine($"ProcessCompletedBuffers: processed={buffersProcessed}, queued={buffersQueued}, state={sourceState}, accumulatedData={_accumulatedData.Count} buffers, total size={_accumulatedData.Sum(b => b.Length)} bytes");
         }
     }
 
@@ -692,7 +681,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     /// <param name="buffersProcessed">Number of buffers to process.</param>
     private unsafe void ProcessAndRefillCompletedBuffers(int buffersProcessed)
     {
-        Console.WriteLine($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Length} bytes");
+        Console.WriteLine($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
 
         // Unqueue the completed buffers from OpenAL
         // These buffers have finished playing and are now available for reuse
@@ -721,7 +710,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private unsafe bool UnqueueCompletedBuffers(int buffersProcessed, uint* processedBuffers)
     {
         Guard.IsNotNull(OpenALApi);
-        
+
         OpenALApi.SourceUnqueueBuffers(_source, buffersProcessed, processedBuffers);
 
         var unqueueError = OpenALApi.GetError();
@@ -743,18 +732,14 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private unsafe int RefillProcessedBuffers(int buffersProcessed, uint* processedBuffers)
     {
         Guard.IsNotNull(OpenALApi);
-        
+
         int buffersRefilled = 0;
-        for (int i = 0; i < buffersProcessed && _accumulatedData.Length > 0; i++)
+        for (int i = 0; i < buffersProcessed && _accumulatedData.Count > 0; i++)
         {
-            // Determine how much data to read for this buffer
-            var dataToRead = Math.Min(BUFFER_SIZE, (int)_accumulatedData.Length);
-            var bufferData = new byte[dataToRead];
+            var bufferData = ReadAudioDataForBuffer();
+            Guard.IsNotEmpty(bufferData);
 
-            // Read from the front of our accumulated data (FIFO order)
-            _accumulatedData.Seek(0, SeekOrigin.Begin);
-            var bytesRead = _accumulatedData.Read(bufferData, 0, dataToRead);
-
+            int bytesRead = bufferData.Length;
             if (bytesRead > 0)
             {
                 // Load the new audio data into the recycled OpenAL buffer
@@ -769,11 +754,9 @@ public class OpenALDeviceStream : Stream, IWaveProvider
                     continue; // Skip this buffer and try the next one
                 }
 
-                // Remove the consumed data from our accumulation buffer
-                RemoveDataFromFront(bytesRead);
                 buffersRefilled++;
 
-                Console.WriteLine($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Length} bytes");
+                Console.WriteLine($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Sum(b => b.Length)} bytes");
             }
         }
 
@@ -788,7 +771,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private unsafe void RequeueRefilledBuffers(int buffersRefilled, uint* processedBuffers)
     {
         Guard.IsNotNull(OpenALApi);
-        
+
         OpenALApi.SourceQueueBuffers(_source, buffersRefilled, processedBuffers);
 
         var requeueError = OpenALApi.GetError();
@@ -808,7 +791,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private void EnsurePlaybackContinues()
     {
         Guard.IsNotNull(OpenALApi);
-        
+
         // Safety check: Restart playback if it stopped unexpectedly
         // Sometimes OpenAL stops playing if it runs out of queued buffers temporarily
         OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int currentSourceState);
@@ -820,49 +803,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
                 Console.WriteLine("Restarting playback - source stopped but buffers are queued");
                 OpenALApi.SourcePlay(_source);
             }
-        }
-    }
-
-    /// <summary>
-    /// Removes the specified number of bytes from the front of the accumulated data buffer.
-    /// </summary>
-    /// <param name="bytesToRemove">The number of bytes to remove from the beginning of the buffer.</param>
-    /// <remarks>
-    /// This method is essential for the streaming workflow. As audio data is consumed from
-    /// the front of the accumulated buffer to fill OpenAL buffers, this method removes
-    /// that consumed data to prevent it from being processed again.
-    /// 
-    /// The implementation:
-    /// 1. Reads all remaining data after the bytes to be removed
-    /// 2. Clears the entire accumulated buffer
-    /// 3. Writes back only the remaining unconsumed data
-    /// 
-    /// This approach maintains the FIFO (first-in-first-out) behavior needed for audio streaming
-    /// where data must be played in the order it was written.
-    /// </remarks>
-    private void RemoveDataFromFront(int bytesToRemove)
-    {
-        if (bytesToRemove <= 0 || _accumulatedData.Length == 0)
-            return;
-
-        // Read remaining data after the bytes we want to remove
-        var remainingBytes = (int)(_accumulatedData.Length - bytesToRemove);
-        if (remainingBytes > 0)
-        {
-            var remainingData = new byte[remainingBytes];
-            _accumulatedData.Seek(bytesToRemove, SeekOrigin.Begin);
-            _accumulatedData.Read(remainingData, 0, remainingBytes);
-
-            // Replace buffer contents with remaining data
-            _accumulatedData.SetLength(0);
-            _accumulatedData.Position = 0;
-            _accumulatedData.Write(remainingData, 0, remainingBytes);
-        }
-        else
-        {
-            // All data was consumed
-            _accumulatedData.SetLength(0);
-            _accumulatedData.Position = 0;
         }
     }
 
