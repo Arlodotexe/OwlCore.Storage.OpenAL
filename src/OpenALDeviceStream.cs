@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace OwlCore.Storage.OpenAL;
 
@@ -58,10 +59,16 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     private const int NUM_BUFFERS = 4;
 
     /// <summary>
-    /// Size of each OpenAL buffer in bytes (64KB).
+    /// Size of each OpenAL buffer in bytes (16KB).
     /// Larger buffers reduce the frequency of buffer swapping but increase memory usage and latency.
     /// </summary>
-    private const int BUFFER_SIZE = 65536;
+    public int BufferSize { get; set; } = 16000;
+
+    /// <summary>
+    /// Threshold for starting streaming.
+    /// When accumulated audio data reaches this size, streaming is initialized.
+    /// </summary>
+    public int BufferPlaybackThreshold { get; set; } = 16000 * 3;
 
     #endregion
 
@@ -194,8 +201,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         lock (_lockobj)
         {
-            //Console.WriteLine($"Write called: offset={offset}, count={count}, accumulatedData={_accumulatedData.Count} buffers, total size={_accumulatedData.Sum(b => b.Length)} bytes");
-
             // Initialize OpenAL device on first write
             if (_source == default)
                 OpenDevice();
@@ -206,9 +211,18 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             var data = buffer.Skip(offset).Take(count).ToArray();
             _accumulatedData.Enqueue(data);
 
+            var totalSize = _accumulatedData.Sum(b => b.Length);
+            var bufferThreshold = BufferSize * 3;
+
+            if (totalSize < bufferThreshold)
+            {
+                // Not enough data to start streaming yet
+                return;
+            }
+
             // Start streaming when we have accumulated enough data to fill at least 2 buffers
             // This ensures smooth initial playback without immediate buffer underruns
-            if (!_isStreaming && _accumulatedData.Sum(b => b.Length) >= BUFFER_SIZE * 2)
+            if (!_isStreaming)
             {
                 StartStreaming();
             }
@@ -264,8 +278,8 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         Guard.IsNotNull(DeviceFile.Parent?.OpenALContext);
 
         // Initialize OpenAL API if not already done
-        OpenALApi ??= AL.GetApi();
-        var parentContext = DeviceFile.Parent.OpenALContext;
+        OpenALApi ??= AL.GetApi(true);
+        var parentContext = DeviceFile.Parent?.OpenALContext ?? ALContext.GetApi(true);
 
         // Open the audio output device and create context
         _device = parentContext.OpenDevice(DeviceFile.Name);
@@ -387,9 +401,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         Console.WriteLine("StartStreaming called");
         Console.WriteLine($"Accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
 
-        // Mark streaming as active - this enables buffer processing on future Write() calls
-        _isStreaming = true;
-
         // Fill initial buffers with accumulated data
         var buffersQueued = FillInitialBuffers();
 
@@ -399,6 +410,9 @@ public class OpenALDeviceStream : Stream, IWaveProvider
 
         // Start audio playback if we haven't already and have buffers ready
         StartPlaybackIfReady(buffersQueued);
+
+        // Mark streaming as active - this enables buffer processing on future Write() calls
+        _isStreaming = true;
     }
 
     /// <summary>
@@ -441,7 +455,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         // Determine how much data to read for this buffer
         // Use the smaller of BUFFER_SIZE or whatever data we have left
-        var dataToRead = Math.Min(BUFFER_SIZE, _accumulatedData.Sum(b => b.Length));
+        var dataToRead = Math.Min(BufferSize, _accumulatedData.Sum(b => b.Length));
         var bufferData = new byte[dataToRead];
 
         for (int o = 0; o < dataToRead;)
@@ -616,9 +630,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         var buffersProcessed = GetCompletedBufferCount();
         if (buffersProcessed < 0) return;
 
-        LogStreamingStateIfActive(buffersProcessed);
-
-        // CRITICAL STREAMING LOGIC: Only process if we have BOTH completed buffers AND new data
+        // Only process if we have BOTH completed buffers AND new data
         // This condition can cause audio cutoff when the input stream ends but OpenAL is still playing
         if (buffersProcessed > 0 && _accumulatedData.Count > 0)
         {
@@ -645,34 +657,6 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             return -1; // Silently ignore errors during buffer processing to avoid spam
 
         return buffersProcessed;
-    }
-
-    /// <summary>
-    /// Logs streaming state information for debugging purposes when there's activity.
-    /// </summary>
-    /// <param name="buffersProcessed">Number of buffers that have been processed.</param>
-    private void LogStreamingStateIfActive(int buffersProcessed)
-    {
-        Guard.IsNotNull(OpenALApi);
-
-        // Debug logging: Track the streaming state to understand what's happening
-        // This helps diagnose issues like buffer starvation or playback problems
-        if (buffersProcessed > 0 || _accumulatedData.Count > 0)
-        {
-            OpenALApi.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int buffersQueued);
-            OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int sourceState);
-
-            // CRITICAL BUG: Audio completely stops if this Console.WriteLine operation is removed!
-            // Investigation results:
-            // ✅ Console.WriteLine() - works (original)
-            // ✅ Console.Error.WriteLine() - works  
-            // ⚠️ Debug.WriteLine() - partial improvement, near immediate exit
-            // ❌ Thread.MemoryBarrier() - immediate exit
-            // ❌ Thread.Yield(), Thread.Sleep(1), Thread.Sleep(0), Task.Delay() - various failures, near immediate exit
-            // It's probably the missing lock on the _accumulatedData Stream
-            // When we pull from this stream to write to the buffer, we also shift the entire stream back by the number of bytes read.
-            Console.WriteLine($"ProcessCompletedBuffers: processed={buffersProcessed}, queued={buffersQueued}, state={sourceState}, accumulatedData={_accumulatedData.Count} buffers, total size={_accumulatedData.Sum(b => b.Length)} bytes");
-        }
     }
 
     /// <summary>
