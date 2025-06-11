@@ -7,6 +7,7 @@ using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace OwlCore.Storage.OpenAL;
 
@@ -68,7 +69,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     /// Threshold for starting streaming.
     /// When accumulated audio data reaches this size, streaming is initialized.
     /// </summary>
-    public int BufferPlaybackThreshold { get; set; } = 16000 * 3;
+    public int BufferPlaybackThreshold { get; set; } = 16000 * 2;
 
     #endregion
 
@@ -212,7 +213,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             _accumulatedData.Enqueue(data);
 
             var totalSize = _accumulatedData.Sum(b => b.Length);
-            var bufferThreshold = BufferSize * 3;
+            var bufferThreshold = BufferPlaybackThreshold;
 
             if (totalSize < bufferThreshold)
             {
@@ -364,17 +365,50 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         }
 
         base.Dispose(disposing);
-    }    /// <summary>
-         /// Flushes any pending audio data to ensure it gets played.
-         /// </summary>
-         /// <remarks>
-         /// For streaming audio, OpenAL manages the buffer queues automatically,
-         /// so no special flush operation is required.
-         /// </remarks>
+    }
+
+    /// <summary>
+    /// Flushes any pending audio data to ensure it gets played.
+    /// </summary>
     public override void Flush()
     {
         // For streaming audio, flush means ensuring all queued data is played
-        // We don't need to do anything special here as OpenAL handles the queues
+        // Wait for queues to be processed
+        if (_isStreaming)
+        {
+            lock (_lockobj)
+            {
+                while (_accumulatedData.Count > 0)
+                {
+                    // If streaming is active, we need to process completed buffers
+                    // This keeps the playback going by refilling buffers as they are consumed                    
+                    // Ensure we process any completed buffers to keep playback going
+                    ProcessCompletedBuffers();
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Flushes any pending audio data to ensure it gets played.
+    /// </summary>
+    public override async Task FlushAsync(CancellationToken cancellationToken)
+    {
+        // For streaming audio, flush means ensuring all queued data is played
+        // Wait for queues to be processed
+        if (_isStreaming)
+        {
+            while (_accumulatedData.Any(x => x.Length > 0))
+            {
+                // If streaming is active, we need to process completed buffers
+                // This keeps the playback going by refilling buffers as they are consumed                    
+                // Ensure we process any completed buffers to keep playback going
+                ProcessCompletedBuffers();
+
+                // Wait for duration of a single sample before checking again
+                await Task.Delay(Frequency / 1000, cancellationToken);
+            }
+        }
     }
 
     #endregion
