@@ -1,7 +1,7 @@
-﻿
+
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>netstandard2.0</TargetFramework>
+		<TargetFrameworks>netstandard2.0;net8.0;net9.0;net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<LangVersion>12.0</LangVersion>
 		<WarningsAsErrors>nullable</WarningsAsErrors>
@@ -67,10 +67,10 @@ Initial release of OwlCore.Storage.OpenAL.
 
 	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Diagnostics" Version="8.3.2" />
-		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.3" Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net10.0'))" />
 		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
-		<PackageReference Include="OwlCore.Storage" Version="0.12.0" />
+		<PackageReference Include="OwlCore.Storage" Version="0.15.0" />
 		<PackageReference Include="PolySharp" Version="1.14.1">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -81,12 +81,12 @@ Initial release of OwlCore.Storage.OpenAL.
 		<PackageReference Include="Silk.NET.OpenAL.Extensions.EXT" Version="2.22.0" />
 		<PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.22.0" />
 		<PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
-		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
+		<PackageReference Include="System.Linq.Async" Version="7.0.0"/>
 		<PackageReference Include="System.Text.Json" Version="9.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>
-	  <None Update="logo.png">
+	  <None Include="logo.png">
 	    <Pack>True</Pack>
 	    <PackagePath>\</PackagePath>
 	  </None>
