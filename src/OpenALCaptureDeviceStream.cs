@@ -34,6 +34,11 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
     public AL? OpenALApi { get; set; }
 
     /// <summary>
+    /// The <see cref="DateTimeOffset"/> at which the <see cref="AudioCapture{BufferFormat}"/> was started.
+    /// </summary>
+    public DateTimeOffset? CaptureStartedAt { get; private set; }
+
+    /// <summary>
     /// The buffer format to use for audio capture. Default is <see cref="BufferFormat.Stereo16"/>.
     /// </summary>
     public BufferFormat BufferFormat { get; init; } = BufferFormat.Stereo16;
@@ -85,6 +90,7 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
         BufferFormat.Mono16 => new WaveFormat((int)Frequency, 16, 1),
         BufferFormat.Stereo8 => new WaveFormat((int)Frequency, 8, 2),
         BufferFormat.Stereo16 => new WaveFormat((int)Frequency, 16, 2),
+        _ => throw new NotSupportedException(),
     };
 
     /// <summary>
@@ -98,7 +104,10 @@ public class OpenALCaptureDeviceStream : Stream, IWaveProvider
         _audioCapture ??= CreateCaptureForDevice();
 
         if (!_audioCapture.IsRunning)
+        {
             _audioCapture.Start();
+            CaptureStartedAt = DateTimeOffset.Now;
+        }
 
         if (_audioCapture.AvailableSamples == 0)
             return 0;
