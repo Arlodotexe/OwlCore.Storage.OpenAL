@@ -22,6 +22,10 @@
 		<PackageIcon>logo.png</PackageIcon>
 		<PackageProjectUrl>https://github.com/Arlodotexe/OwlCore.Storage.OpenAL</PackageProjectUrl>
 		<PackageReleaseNotes>
+--- 0.2.1 ---
+[Fixes]
+Fixed an issue where device list was showing only OpenAL Soft without actual device names
+
 --- 0.2.0 ---
 [New]
 Implemented CreatedAt property for device capture pointing to exact _audioCapture.Start() call time. 
