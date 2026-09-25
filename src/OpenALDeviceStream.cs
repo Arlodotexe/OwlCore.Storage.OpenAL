@@ -8,6 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using OwlCore.Diagnostics;
 
 namespace OwlCore.Storage.OpenAL;
 
@@ -288,8 +289,8 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         parentContext.MakeContextCurrent(_deviceContext);
 
         // Log device and audio format information for debugging
-        Console.WriteLine($"OpenAL Device: {DeviceFile.Name}");
-        Console.WriteLine($"Audio Format: {BufferFormat}, Frequency: {Frequency}Hz");
+        Logger.LogInformation($"OpenAL Device: {DeviceFile.Name}");
+        Logger.LogInformation($"Audio Format: {BufferFormat}, Frequency: {Frequency}Hz");
 
         // Calculate and log audio format details for verification
         int bytesPerSample = BufferFormat switch
@@ -308,8 +309,8 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             _ => 1
         };
 
-        Console.WriteLine($"Expected bytes per sample: {bytesPerSample}");
-        Console.WriteLine($"Expected channels: {channels}");
+        Logger.LogInformation($"Expected bytes per sample: {bytesPerSample}");
+        Logger.LogInformation($"Expected channels: {channels}");
 
         // Create OpenAL source (represents the audio emitter/player)
         _source = OpenALApi.GenSource();
@@ -325,7 +326,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         if (bufferError is not AudioError.NoError)
             throw new Exception($"GenBuffers error: {bufferError}");
 
-        Console.WriteLine($"Generated {NUM_BUFFERS} OpenAL buffers and 1 source");
+        Logger.LogInformation($"Generated {NUM_BUFFERS} OpenAL buffers and 1 source");
     }
 
     #endregion
@@ -432,8 +433,8 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     {
         Guard.IsNotNull(OpenALApi);
 
-        Console.WriteLine("StartStreaming called");
-        Console.WriteLine($"Accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
+        Logger.LogInformation("StartStreaming called");
+        Logger.LogInformation($"Accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
 
         // Fill initial buffers with accumulated data
         var buffersQueued = FillInitialBuffers();
@@ -470,11 +471,11 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             if (FillSingleBuffer(i, bufferData))
             {
                 buffersQueued++;
-                Console.WriteLine($"Buffer {i}: Successfully filled and marked for queuing");
+                Logger.LogInformation($"Buffer {i}: Successfully filled and marked for queuing");
             }
         }
 
-        Console.WriteLine($"Total buffers to queue: {buffersQueued}");
+        Logger.LogInformation($"Total buffers to queue: {buffersQueued}");
         return buffersQueued;
     }
 
@@ -533,8 +534,9 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         var bufferError = OpenALApi.GetError();
         if (bufferError is not AudioError.NoError)
         {
-            Console.WriteLine($"BufferData error for buffer {bufferIndex}: {bufferError}");
-            throw new Exception($"BufferData error: {bufferError}");
+            var ex = new Exception($"BufferData error: {bufferError}");
+            Logger.LogError($"BufferData error for buffer {bufferIndex}: {bufferError}", ex);
+            throw ex;
         }
 
         return true;
@@ -556,7 +558,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         // Debug validation: Log first few bytes of audio data for troubleshooting
         if (bytesRead >= 8)
         {
-            Console.WriteLine($"Buffer {bufferIndex} first bytes: {bufferData[0]:X2} {bufferData[1]:X2} {bufferData[2]:X2} {bufferData[3]:X2} {bufferData[4]:X2} {bufferData[5]:X2} {bufferData[6]:X2} {bufferData[7]:X2}");
+            Logger.LogInformation($"Buffer {bufferIndex} first bytes: {bufferData[0]:X2} {bufferData[1]:X2} {bufferData[2]:X2} {bufferData[3]:X2} {bufferData[4]:X2} {bufferData[5]:X2} {bufferData[6]:X2} {bufferData[7]:X2}");
         }
 
         // Debug validation: Check for silence (all zeros) which might indicate a problem
@@ -569,7 +571,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
                 break;
             }
         }
-        Console.WriteLine($"Buffer {bufferIndex}: Is silence (first 100 bytes): {isAllZeros}");
+        Logger.LogInformation($"Buffer {bufferIndex}: Is silence (first 100 bytes): {isAllZeros}");
     }
 
     /// <summary>
@@ -596,11 +598,12 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         var queueError = OpenALApi.GetError();
         if (queueError is not AudioError.NoError)
         {
-            Console.WriteLine($"SourceQueueBuffers error: {queueError}");
-            throw new Exception($"SourceQueueBuffers error: {queueError}");
+            var ex =  new Exception($"SourceQueueBuffers error: {queueError}");
+            Logger.LogError($"SourceQueueBuffers error: {queueError}", ex);
+            throw ex;
         }
 
-        Console.WriteLine($"Successfully queued {buffersQueued} buffers");
+        Logger.LogInformation($"Successfully queued {buffersQueued} buffers");
     }
 
     /// <summary>
@@ -616,28 +619,29 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         Guard.IsNotNull(OpenALApi);
         if (!_playbackStarted && buffersQueued > 0)
         {
-            Console.WriteLine("Starting OpenAL playback...");
+            Logger.LogInformation("Starting OpenAL playback...");
             OpenALApi.SourcePlay(_source);
             _playbackStarted = true;
 
             var playError = OpenALApi.GetError();
             if (playError is not AudioError.NoError)
             {
-                Console.WriteLine($"SourcePlay error: {playError}");
-                throw new Exception($"SourcePlay error: {playError}");
+                var ex = new Exception($"SourcePlay error: {playError}");
+                Logger.LogError($"SourcePlay error: {playError}", ex);
+                throw ex;
             }
 
             // Verify the source actually started playing for debugging
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.SourceState, out int sourceState);
-            Console.WriteLine($"Source state after SourcePlay: {sourceState} (PLAYING={4114})");
+            Logger.LogInformation($"Source state after SourcePlay: {sourceState} (PLAYING={4114})");
         }
         else if (_playbackStarted)
         {
-            Console.WriteLine("Playback already started");
+            Logger.LogInformation("Playback already started");
         }
         else
         {
-            Console.WriteLine($"Not starting playback: buffersQueued={buffersQueued}");
+            Logger.LogInformation($"Not starting playback: buffersQueued={buffersQueued}");
         }
     }
 
@@ -699,7 +703,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
     /// <param name="buffersProcessed">Number of buffers to process.</param>
     private unsafe void ProcessAndRefillCompletedBuffers(int buffersProcessed)
     {
-        Console.WriteLine($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
+        Logger.LogInformation($"Processing {buffersProcessed} completed buffers, accumulated data: {_accumulatedData.Count} buffers, total size: {_accumulatedData.Sum(b => b.Length)} bytes");
 
         // Unqueue the completed buffers from OpenAL
         // These buffers have finished playing and are now available for reuse
@@ -734,7 +738,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         var unqueueError = OpenALApi.GetError();
         if (unqueueError is not AudioError.NoError)
         {
-            Console.WriteLine($"SourceUnqueueBuffers error: {unqueueError}");
+            Logger.LogError($"SourceUnqueueBuffers error: {unqueueError}");
             return false;
         }
 
@@ -768,13 +772,13 @@ public class OpenALDeviceStream : Stream, IWaveProvider
                 var bufferError = OpenALApi.GetError();
                 if (bufferError is not AudioError.NoError)
                 {
-                    Console.WriteLine($"BufferData error: {bufferError}");
+                    Logger.LogError($"BufferData error: {bufferError}");
                     continue; // Skip this buffer and try the next one
                 }
 
                 buffersRefilled++;
 
-                Console.WriteLine($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Sum(b => b.Length)} bytes");
+                Logger.LogInformation($"Refilled buffer {i} with {bytesRead} bytes, remaining data: {_accumulatedData.Sum(b => b.Length)} bytes");
             }
         }
 
@@ -795,11 +799,11 @@ public class OpenALDeviceStream : Stream, IWaveProvider
         var requeueError = OpenALApi.GetError();
         if (requeueError is not AudioError.NoError)
         {
-            Console.WriteLine($"SourceQueueBuffers error: {requeueError}");
+            Logger.LogInformation($"SourceQueueBuffers error: {requeueError}");
         }
         else
         {
-            Console.WriteLine($"Successfully requeued {buffersRefilled} buffers");
+            Logger.LogInformation($"Successfully requeued {buffersRefilled} buffers");
         }
     }
 
@@ -818,7 +822,7 @@ public class OpenALDeviceStream : Stream, IWaveProvider
             OpenALApi.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int buffersQueued);
             if (buffersQueued > 0)
             {
-                Console.WriteLine("Restarting playback - source stopped but buffers are queued");
+                Logger.LogInformation("Restarting playback - source stopped but buffers are queued");
                 OpenALApi.SourcePlay(_source);
             }
         }

@@ -25,6 +25,7 @@
 --- 0.2.1 ---
 [Fixes]
 Fixed an issue where device list was showing only OpenAL Soft without actual device names
+Cleaned up stdout log clutter, switched to OwlCore.Diagnostics.Logger.
 
 --- 0.2.0 ---
 [New]
@@ -87,6 +88,7 @@ Initial release of OwlCore.Storage.OpenAL.
 		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
 		<PackageReference Include="NAudio.Core" Version="2.2.1" />
 		<PackageReference Include="OwlCore.Storage" Version="0.15.0" />
+		<PackageReference Include="OwlCore.Diagnostics" Version="0.1.0"/>
 		<PackageReference Include="PolySharp" Version="1.14.1">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
