@@ -1,4 +1,5 @@
 ﻿using Silk.NET.OpenAL;
+using Silk.NET.OpenAL.Extensions.Creative;
 using Silk.NET.OpenAL.Extensions.Enumeration;
 using System;
 using System.Collections.Generic;
@@ -64,12 +65,16 @@ public class OpenALDevicesFolder : IFolder
 
     private unsafe IEnumerable<string> GetDevices(ALContext context)
     {
-        // Check if enumeration extension is available.
-        if (context.TryGetExtension(null, out Enumeration enumeration))
+        // Enumerate ALL device specifiers via Creative's ALC_ENUMERATE_ALL_EXT on the
+        // null/default context. The default-enumeration extension's DeviceSpecifiers
+        // (0x1005) on a null context returns only the default device's own specifier
+        // (observed regression: a single "OpenAL Soft" duplicated by the default file
+        // yielded above). Matches Silk.NET's own GetStringListTests pattern.
+        if (context.TryGetExtension(null, out EnumerateAll enumerateAll))
         {
-            return enumeration.GetStringList(GetEnumerationContextStringList.DeviceSpecifiers);
+            return enumerateAll.GetStringList(GetEnumerateAllContextStringList.AllDevicesSpecifier);
         }
 
-        throw new InvalidOperationException("OpenAL enumeration extension not available.");
+        throw new InvalidOperationException("OpenAL enumerate-all extension not available.");
     }
 }
